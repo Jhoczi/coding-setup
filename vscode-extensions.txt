@@ -1,0 +1,44 @@
+# --- .NET / C#
+ms-dotnettools.csdevkit
+ms-dotnettools.csharp
+ms-dotnettools.vscode-dotnet-runtime
+VisualStudioExptTeam.vscodeintellicode
+k--kato.docomment
+csharpier.csharpier-vscode
+formulahendry.dotnet-test-explorer
+
+# --- Python
+ms-python.python
+ms-python.vscode-pylance
+ms-toolsai.jupyter
+ms-python.black-formatter
+ms-python.isort
+charliermarsh.ruff
+
+# --- JavaScript / TypeScript (React / Angular / Nest)
+dbaeumer.vscode-eslint
+esbenp.prettier-vscode
+christian-kohler.path-intellisense
+dsznajder.es7-react-js-snippets
+Angular.ng-template
+nrwl.angular-console
+
+# --- Docker / Remote
+ms-azuretools.vscode-docker
+ms-vscode-remote.remote-wsl
+ms-vscode-remote.remote-containers
+ms-vscode-remote.remote-ssh
+
+# --- Git / Productivity
+eamodio.gitlens
+mhutchie.git-graph
+EditorConfig.EditorConfig
+Gruntfuggly.todo-tree
+
+# --- Icons / Themes
+PKief.material-icon-theme
+
+# --- JSON / YAML / .env
+redhat.vscode-yaml
+mikestead.dotenv
+richie5um2.vscode-sort-json
