@@ -40,6 +40,28 @@ function Choco-Install([string]$id, [string]$installArgs = $null) {
   choco @cmd | Out-Null
 }
 
+function Resolve-ChocoDotnetId([int]$major) {
+  # Potential choco names for dotnet sdk:
+  $candidates = @(
+    "dotnet-$($major).0-sdk",
+    "dotnet-$($major)-sdk",
+    "dotnet-sdk-$major",
+    "dotnet-sdk"           # universal "latest” (final fallback)
+  )
+
+  foreach ($id in $candidates) {
+    try {
+      $exists = choco search $id --exact --id-only --limit-output 2>$null
+      if ($LASTEXITCODE -eq 0 -and $exists -match "^\Q$id\E$") {
+        return $id
+      }
+    } catch {
+      # ignore single attempt errors
+    }
+  }
+  return $null
+}
+
 function Install-Package([string]$wingetId, [string]$chocoId, [string]$chocoArgs = $null) {
   try {
     Winget-Install $wingetId
@@ -49,12 +71,42 @@ function Install-Package([string]$wingetId, [string]$chocoId, [string]$chocoArgs
   }
 }
 
+# --- Versions source (from versions.json) ---
+$versionsPath = Join-Path $PSScriptRoot "versions.json"
+if (-not (Test-Path $versionsPath))
+{
+  throw "Missing versions.json next to install-dev.ps1. Create it first."
+}
+$versions = Get-Content $versionsPath | ConvertFrom-Json
+
+# Compose winget IDs from versions.json
+$DotnetLtsMajor = $versions.dotnetLtsMajor
+$PythonMinorCycle = $versions.pythonSupportedMinor
+
+$DotnetWingetId = "Microsoft.Dotnet.SDK.$DotnetLtsMajor"
+$PythonWingetId = "Python.Python.$PythonMinorCycle"
+
+# --- detect dynamic choco fallback for .NET ---
+$ChocoDotnetId = $null
+try {
+  Ensure-Choco
+  $ChocoDotnetId = Resolve-ChocoDotnetId -major $DotnetLtsMajor
+  if (-not $ChocoDotnetId) {
+    Write-Warning ("Cannot find the package for choco .NET {0} - winget should be enough." -f $DotnetLtsMajor)
+  } else {
+    Write-Host   ("Choco fallback for .NET {0}: {1}" -f $DotnetLtsMajor, $ChocoDotnetId)
+  }
+}
+catch {
+  Write-Warning "Cannot detect choco fallback (repo offline?). Will try winget."
+}
+
 # --- Core tools ---
 Install-Package "Git.Git"                     "git"
 Install-Package "Microsoft.VisualStudioCode"  "vscode"
-Install-Package "Microsoft.DotNet.SDK.8"      "dotnet-8.0-sdk" '"/quiet /norestart"'
+Install-Package $DotnetWingetId               $ChocoDotnetId '"/quiet /norestart"'
 Install-Package "OpenJS.NodeJS.LTS"           "nodejs-lts"     '"/qn /norestart"'
-Install-Package "Python.Python.3.12"          "python"         '"/quiet InstallAllUsers=1 PrependPath=1 Include_test=0"'
+Install-Package $PythonWingetId          "python"         '"/quiet InstallAllUsers=1 PrependPath=1 Include_test=0"'
 Install-Package "DBeaver.DBeaver"             "dbeaver"
 
 # choco-only
@@ -73,4 +125,4 @@ try { node -v } catch {}
 try { npm -v } catch {}
 try { python --version } catch {}
 try { make --version | Select-String -Pattern "GNU Make" } catch {}
-Write-Host "`n✅ Dev tools installed/updated."
+Write-Host "`n Dev tools installed/updated."

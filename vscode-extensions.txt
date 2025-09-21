@@ -35,6 +35,9 @@ mhutchie.git-graph
 EditorConfig.EditorConfig
 Gruntfuggly.todo-tree
 
+# --- CI/CD
+github.vscode-github-actions
+
 # --- Icons / Themes
 PKief.material-icon-theme
 
@@ -42,3 +45,6 @@ PKief.material-icon-theme
 redhat.vscode-yaml
 mikestead.dotenv
 richie5um2.vscode-sort-json
+
+# --- PowerShell
+ms-vscode.PowerShell
