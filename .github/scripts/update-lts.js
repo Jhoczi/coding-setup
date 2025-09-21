@@ -114,8 +114,14 @@ async function getPythonLatestSupportedMinor() {
   const changes = []
 
   if (current.dotnetLtsMajor !== nextDotnet) {
-    changes.push(`.NET LTS: ${current.dotnetLtsMajor} → ${nextDotnet}`)
-    out.dotnetLtsMajor = nextDotnet
+    if (nextDotnet > current.dotnetLtsMajor) {
+      changes.push(`.NET LTS: ${current.dotnetLtsMajor} → ${nextDotnet}`)
+      out.dotnetLtsMajor = nextDotnet
+    } else {
+      console.warn(
+        `Skipped downgrade of .NET LTS: API suggested ${nextDotnet}, current is ${current.dotnetLtsMajor}`
+      )
+    }
   }
   if (current.pythonSupportedMinor !== nextPy) {
     // Guard: do not downgrade if somehow API returns lower cycle
