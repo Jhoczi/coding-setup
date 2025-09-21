@@ -1,3 +1,4 @@
+// Node 18+/22, zero deps
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -6,58 +7,90 @@ const VERSIONS = path.join(ROOT, 'versions.json')
 const REPORT = path.join(ROOT, '.github', 'lts-report.md')
 
 function readJson(p) {
-  return JSON.parse(fs.readFileSync(p, 'utf-8'))
+  return JSON.parse(fs.readFileSync(p, 'utf8'))
 }
-
 function writeJson(p, obj) {
   fs.writeFileSync(p, JSON.stringify(obj, null, 2) + '\n')
 }
-
 function writeReport(lines) {
   fs.mkdirSync(path.dirname(REPORT), { recursive: true })
   fs.writeFileSync(REPORT, lines.join('\n') + '\n')
 }
 
 async function getJson(url) {
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'lts-updater',
-    },
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'lts-updater', Accept: 'application/json' },
   })
-
-  if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`)
-
-  return response.json()
+  if (!res.ok) throw new Error(`GET ${url} -> ${res.status}`)
+  // could not find JSON, try safe:
+  const text = await res.text()
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`GET ${url} returned non-JSON (len=${text.length})`)
+  }
 }
 
+// .NET: LTS
 async function getDotnetLtsMajor() {
   const idx = await getJson(
     'https://builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json'
   )
-
-  const lts = idx['releases-index']
-    .filter((x) => x['release-type'] === 'lts')
-    .filter((x) => !String(x['latest-release'] || '').includes('-')) // without preview/rc
-
+  const list = Array.isArray(idx?.['releases-index']) ? idx['releases-index'] : []
+  const lts = list
+    .filter((x) => x?.['release-type'] === 'lts')
+    .filter((x) => !String(x?.['latest-release'] || '').includes('-')) // bez preview/rc
   if (!lts.length) throw new Error('No stable .NET LTS channels found')
-
   lts.sort((a, b) => parseInt(b['channel-version']) - parseInt(a['channel-version']))
-
   return parseInt(lts[0]['channel-version'], 10) // np. 8 → 10
 }
 
+// Python: LTS
 async function getPythonLatestSupportedMinor() {
-  const list = await getJson('https://endoflife.date/api/v1/products/python')
+  const urls = [
+    'https://endoflife.date/api/python.json',
+    'https://endoflife.date/api/v1/python.json',
+    'https://endoflife.date/api/v1/products/python',
+  ]
+
+  let data, lastErr
+  for (const u of urls) {
+    try {
+      data = await getJson(u)
+      break
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  if (!data) throw lastErr ?? new Error('Cannot fetch Python EOL data')
+
+  // Normalize to table records
+  let rows
+  if (Array.isArray(data)) {
+    rows = data
+  } else if (Array.isArray(data?.cycles)) {
+    rows = data.cycles
+  } else if (Array.isArray(data?.releases)) {
+    rows = data.releases
+  } else {
+    // try heuristics
+    const maybeArrayKey = Object.keys(data).find((k) => Array.isArray(data[k]))
+    if (maybeArrayKey) rows = data[maybeArrayKey]
+  }
+  if (!Array.isArray(rows)) {
+    const keys = Object.keys(data || {})
+    throw new Error(`Unexpected Python API shape. Keys: [${keys.join(', ')}]`)
+  }
 
   const now = new Date()
-  const active3x = list
-    .filter((x) => x.cycle && x.cycle.startsWith('3.'))
-    .filter((x) => x.eol && new Date(x.eol) > now)
+  const active3x = rows
+    .filter((x) => !!x?.cycle && String(x.cycle).startsWith('3.'))
+    .filter((x) => !!x?.eol && new Date(x.eol) > now)
 
   if (!active3x.length) throw new Error('No supported Python 3.x cycles')
 
   active3x.sort((a, b) => parseFloat(b.cycle) - parseFloat(a.cycle))
-  return active3x[0].cycle // np. "3.13"
+  return String(active3x[0].cycle) // np. "3.13"
 }
 
 ;(async () => {
@@ -83,7 +116,7 @@ async function getPythonLatestSupportedMinor() {
     writeJson(VERSIONS, out)
     report.push(...changes.map((x) => `- ${x}`))
   } else {
-    report.push('No changes detected (already have the LTS).')
+    report.push('Brak zmian (już masz najnowsze LTS).')
   }
   writeReport(report)
 })().catch((err) => {
