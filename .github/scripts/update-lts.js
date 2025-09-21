@@ -6,6 +6,7 @@ const ROOT = process.cwd()
 const VERSIONS = path.join(ROOT, 'versions.json')
 const REPORT = path.join(ROOT, '.github', 'lts-report.md')
 
+// --- Utility functions ---
 function readJson(p) {
   return JSON.parse(fs.readFileSync(p, 'utf8'))
 }
@@ -22,7 +23,6 @@ async function getJson(url) {
     headers: { 'User-Agent': 'lts-updater', Accept: 'application/json' },
   })
   if (!res.ok) throw new Error(`GET ${url} -> ${res.status}`)
-  // could not find JSON, try safe:
   const text = await res.text()
   try {
     return JSON.parse(text)
@@ -31,7 +31,7 @@ async function getJson(url) {
   }
 }
 
-// .NET: LTS
+// --- .NET: detect latest stable LTS major ---
 async function getDotnetLtsMajor() {
   const idx = await getJson(
     'https://builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json'
@@ -39,13 +39,24 @@ async function getDotnetLtsMajor() {
   const list = Array.isArray(idx?.['releases-index']) ? idx['releases-index'] : []
   const lts = list
     .filter((x) => x?.['release-type'] === 'lts')
-    .filter((x) => !String(x?.['latest-release'] || '').includes('-')) // bez preview/rc
+    .filter((x) => !String(x?.['latest-release'] || '').includes('-')) // exclude preview/rc
   if (!lts.length) throw new Error('No stable .NET LTS channels found')
   lts.sort((a, b) => parseInt(b['channel-version']) - parseInt(a['channel-version']))
-  return parseInt(lts[0]['channel-version'], 10) // np. 8 → 10
+  return parseInt(lts[0]['channel-version'], 10) // e.g. 8 → 10
 }
 
-// Python: LTS
+// --- Python: detect latest active 3.x cycle ---
+function cmpCyclesDesc(a, b) {
+  const [amaj, amin] = String(a.cycle)
+    .split('.')
+    .map((n) => parseInt(n, 10))
+  const [bmaj, bmin] = String(b.cycle)
+    .split('.')
+    .map((n) => parseInt(n, 10))
+  if (bmaj !== amaj) return bmaj - amaj // higher major first
+  return bmin - amin // higher minor first
+}
+
 async function getPythonLatestSupportedMinor() {
   const urls = [
     'https://endoflife.date/api/python.json',
@@ -64,7 +75,7 @@ async function getPythonLatestSupportedMinor() {
   }
   if (!data) throw lastErr ?? new Error('Cannot fetch Python EOL data')
 
-  // Normalize to table records
+  // Normalize to an array of records
   let rows
   if (Array.isArray(data)) {
     rows = data
@@ -73,7 +84,6 @@ async function getPythonLatestSupportedMinor() {
   } else if (Array.isArray(data?.releases)) {
     rows = data.releases
   } else {
-    // try heuristics
     const maybeArrayKey = Object.keys(data).find((k) => Array.isArray(data[k]))
     if (maybeArrayKey) rows = data[maybeArrayKey]
   }
@@ -89,10 +99,11 @@ async function getPythonLatestSupportedMinor() {
 
   if (!active3x.length) throw new Error('No supported Python 3.x cycles')
 
-  active3x.sort((a, b) => parseFloat(b.cycle) - parseFloat(a.cycle))
-  return String(active3x[0].cycle) // np. "3.13"
+  active3x.sort(cmpCyclesDesc)
+  return String(active3x[0].cycle) // e.g. "3.13"
 }
 
+// --- Main script ---
 ;(async () => {
   const current = readJson(VERSIONS)
 
@@ -107,8 +118,15 @@ async function getPythonLatestSupportedMinor() {
     out.dotnetLtsMajor = nextDotnet
   }
   if (current.pythonSupportedMinor !== nextPy) {
-    changes.push(`Python 3.x: ${current.pythonSupportedMinor} → ${nextPy}`)
-    out.pythonSupportedMinor = nextPy
+    // Guard: do not downgrade if somehow API returns lower cycle
+    const [curMaj, curMin] = String(current.pythonSupportedMinor).split('.').map(Number)
+    const [newMaj, newMin] = String(nextPy).split('.').map(Number)
+    const isUpgrade = newMaj > curMaj || (newMaj === curMaj && newMin > curMin)
+
+    if (isUpgrade) {
+      changes.push(`Python 3.x: ${current.pythonSupportedMinor} → ${nextPy}`)
+      out.pythonSupportedMinor = nextPy
+    }
   }
 
   const report = ['# LTS bump report', '']
@@ -116,7 +134,7 @@ async function getPythonLatestSupportedMinor() {
     writeJson(VERSIONS, out)
     report.push(...changes.map((x) => `- ${x}`))
   } else {
-    report.push('Brak zmian (już masz najnowsze LTS).')
+    report.push('No changes (already latest LTS).')
   }
   writeReport(report)
 })().catch((err) => {
