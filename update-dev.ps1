@@ -1,11 +1,14 @@
-# update-dev-v3.ps1
+# update-dev.ps1
 param(
-  [switch]$UpgradeAllWinget,   # optional: winget upgrade --all
-  [switch]$SkipCloseApps       # don't close apps/services before upgrade
+  [switch]$UpgradeAllWinget,
+  [switch]$SkipCloseApps,
+  [switch]$CloseApps
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = 'SilentlyContinue'
+. (Join-Path $PSScriptRoot "external-tools.ps1")
+. (Join-Path $PSScriptRoot "dev-packages.ps1")
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $logPath = Join-Path $PSScriptRoot "update-dev-$stamp.log"
@@ -21,15 +24,6 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 
 function Winget-Available { [bool](Get-Command winget -ErrorAction SilentlyContinue) }
-function Ensure-Choco {
-  if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Set-ExecutionPolicy Bypass -Scope Process -Force
-    iex ((New-Object Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-  }
-  choco feature enable -n allowGlobalConfirmation | Out-Null
-  choco feature enable -n useEnhancedExitCodes  | Out-Null
-}
 
 function Stop-Proc([string[]]$names){
   foreach($n in $names){
@@ -41,8 +35,10 @@ function Stop-Docker {
   Stop-Proc @("Docker Desktop")
 }
 
-# --- Pre-close running apps to avoid prompts ---
-if (-not $SkipCloseApps) {
+$targets = @(Get-DevPackages)
+
+# Close running apps only when explicitly requested.
+if ($CloseApps -and -not $SkipCloseApps) {
   Write-Host "==> Closing apps (VS Code, DBeaver, Docker Desktop) to avoid prompts..."
   # VS Code process is "Code"; insiders is "Code - Insiders"
   Stop-Proc @("Code","Code - Insiders","dbeaver")
@@ -53,9 +49,8 @@ if (-not $SkipCloseApps) {
 function Winget-Upgrade([string]$id) {
   if (-not (Winget-Available)) { throw "winget not available." }
   Write-Host "==> winget upgrade $id"
-  winget upgrade --id $id -e `
-    --accept-package-agreements --accept-source-agreements `
-    --silent --disable-interactivity --force | Out-Null
+  # 0x8A15002B means no applicable update is available.
+  Invoke-ExternalTool winget @('upgrade', '--id', $id, '-e', '--accept-package-agreements', '--accept-source-agreements', '--silent', '--disable-interactivity', '--force') -SuccessExitCodes @(0, -1978335189) | Out-Null
 }
 
 # --- Chocolatey upgrade helper ---
@@ -64,34 +59,19 @@ function Choco-Upgrade([string]$id, [string]$installArgs = $null) {
   Write-Host "==> choco upgrade $id"
   $cmd = @("upgrade",$id,"--yes","--accept-license","--no-progress","--limit-output","--execution-timeout=0")
   if ($installArgs) { $cmd += "--install-arguments=$installArgs" }
-  choco @cmd | Out-Null
+  Invoke-ExternalTool choco $cmd -SuccessExitCodes @(0, 2, 1641, 3010) | Out-Null
 }
 
-# --- Targets (prefer winget; fallback to choco) ---
-$targets = @(
-  @{ win="Git.Git";                    choco="git";             args=$null },
-  @{ win="Microsoft.VisualStudioCode"; choco="vscode";          args=$null },
-  @{ win="Microsoft.DotNet.SDK.8";     choco="dotnet-8.0-sdk";  args='"/quiet /norestart"' },
-  @{ win="OpenJS.NodeJS.LTS";          choco="nodejs-lts";      args='"/qn /norestart"' },
-  @{ win="Python.Python.3.12";         choco="python";          args='"/quiet InstallAllUsers=1 PrependPath=1 Include_test=0"' },
-  @{ win="DBeaver.DBeaver";            choco="dbeaver";         args=$null }
-)
-
-foreach ($t in $targets) {
-  try   { Winget-Upgrade $t.win }
-  catch { Write-Warning ("Falling back to Chocolatey for {0}" -f $t.win); Choco-Upgrade $t.choco $t.args }
+foreach ($package in $targets) {
+  Invoke-DevPackage $package { param($id) Winget-Upgrade $id } { param($id, $installArgs) Choco-Upgrade $id $installArgs }
 }
 
-# choco-managed only
-Choco-Upgrade "make"
-# Docker Desktop requires service stop to avoid prompts
-if (-not $SkipCloseApps) { Stop-Docker }
 Choco-Upgrade "docker-desktop"
 
 # optional: upgrade everything else via winget
 if ($UpgradeAllWinget -and (Winget-Available)) {
   Write-Host "==> winget upgrade --all ..."
-  winget upgrade --all --accept-package-agreements --accept-source-agreements --silent --disable-interactivity --force | Out-Null
+  Invoke-ExternalTool winget @('upgrade', '--all', '--accept-package-agreements', '--accept-source-agreements', '--silent', '--disable-interactivity', '--force') -SuccessExitCodes @(0, -1978335189) | Out-Null
 }
 
 # refresh PATH for current session

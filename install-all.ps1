@@ -3,26 +3,35 @@
 # 1) Admin phase: Chocolatey, core tools, Docker/WSL, optional updates
 # 2) User phase: global dev tools, VS Code setup (non-admin via Scheduled Task)
 
+param(
+  [switch]$UpdateAfterInstall,
+  [switch]$CloseApps
+)
+
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = 'SilentlyContinue'
+
+if ($CloseApps -and -not $UpdateAfterInstall) {
+  throw "Use -CloseApps with -UpdateAfterInstall."
+}
 
 # --- Self-elevate to Administrator if needed ---
 $me   = [Security.Principal.WindowsIdentity]::GetCurrent()
 $prin = New-Object Security.Principal.WindowsPrincipal($me)
 if (-not $prin.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   # Relaunch this script elevated, then exit current (non-admin) instance
-  $args = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
-  Start-Process -FilePath "powershell.exe" -ArgumentList $args -Verb RunAs
+  $elevationArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+  if ($UpdateAfterInstall) { $elevationArgs += ' -UpdateAfterInstall' }
+  if ($CloseApps) { $elevationArgs += ' -CloseApps' }
+  Start-Process -FilePath "powershell.exe" -ArgumentList $elevationArgs -Verb RunAs
   exit
 }
 
 # --- Paths ---
 $ROOT              = Split-Path -Parent $PSCommandPath
 $installChoco      = Join-Path $ROOT "install-choco.ps1"
-$installDevV2      = Join-Path $ROOT "install-dev-v2.ps1"
 $installDev        = Join-Path $ROOT "install-dev.ps1"
 $installDocker     = Join-Path $ROOT "install-docker.ps1"
-$updateDevV3       = Join-Path $ROOT "update-dev-v3.ps1"
 $updateDev         = Join-Path $ROOT "update-dev.ps1"
 $userPhaseScript   = Join-Path $env:TEMP "dev-setup-user-phase.ps1"
 $userPhaseDoneFlag = Join-Path $env:TEMP "dev-setup-user-phase.done"
@@ -43,14 +52,11 @@ if (Test-Path $installChoco) {
 }
 
 # --- 2) Core dev tools (Git, VS Code, .NET, Node, Python, DBeaver, Make) ---
-if (Test-Path $installDevV2) {
-  Write-Host "-> Running install-dev-v2.ps1"
-  & $installDevV2
-} elseif (Test-Path $installDev) {
+if (Test-Path $installDev) {
   Write-Host "-> Running install-dev.ps1"
   & $installDev
 } else {
-  Write-Warning "install-dev*.ps1 not found. Skipping."
+  Write-Warning "install-dev.ps1 not found. Skipping."
 }
 
 # --- 3) Docker Desktop + WSL2/Ubuntu ---
@@ -61,15 +67,10 @@ if (Test-Path $installDocker) {
   Write-Warning "install-docker.ps1 not found. Skipping."
 }
 
-# --- 4) Optional: system-level update (quiet) if a script exists ---
-if (Test-Path $updateDevV3) {
-  Write-Host "-> Running update-dev-v3.ps1 (quiet)"
-  & $updateDevV3 -SkipCloseApps
-} elseif (Test-Path $updateDev) {
+# --- 4) Optional system-level update ---
+if ($UpdateAfterInstall) {
   Write-Host "-> Running update-dev.ps1"
-  & $updateDev
-} else {
-  Write-Host "-> No update-dev script found. Continuing."
+  & $updateDev -CloseApps:$CloseApps
 }
 
 Write-Host "==> Admin phase finished."

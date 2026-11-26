@@ -1,5 +1,6 @@
 # setup-vscode.ps1 -> powershell -NoProfile -ExecutionPolicy Bypass -File .\setup-vscode.ps1
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "external-tools.ps1")
 
 # 0) Ensure VS Code CLI
 $codeCmd = Get-Command code -ErrorAction SilentlyContinue
@@ -21,11 +22,15 @@ if (-not (Test-Path $extListPath)) { throw "Missing vscode-extensions.txt next t
 $extensions = Get-Content $extListPath | Where-Object { $_ -and $_.Trim() -ne "" -and -not $_.Trim().StartsWith("#") }
 
 Write-Host "=> Installing extensions..."
-$installed = code --list-extensions
+$installed = Invoke-ExternalTool code @('--list-extensions')
 foreach ($ext in $extensions) {
-  if ($installed -notcontains $ext) { Write-Host "   + $ext"; code --install-extension $ext --force | Out-Null }
+  if ($installed -notcontains $ext) {
+    Invoke-ExternalTool code @('--install-extension', $ext, '--force') | Out-Null
+    Write-Host "   + $ext"
+  }
   else                              { Write-Host "   = $ext (already)" }
 }
 
-Write-Host "`n==> VS Code setup complete."; code --version
+Invoke-ExternalTool code @('--version')
+Write-Host "`n==> VS Code setup complete."
 

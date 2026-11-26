@@ -1,6 +1,7 @@
 # install-global-tools-user.ps1 (python-safe)
 $ErrorActionPreference = "Stop"
 $ProgressPreference = 'SilentlyContinue'
+. (Join-Path $PSScriptRoot "external-tools.ps1")
 
 # --- 0) Must NOT run as Admin ---
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -27,7 +28,7 @@ elseif (Get-Command python -ErrorAction SilentlyContinue) { $PY_EXE = "python"; 
 else { throw "Python not found on PATH. Run install-dev-v2.ps1 (Admin) first, then open a NEW terminal." }
 
 function RunPy([string[]]$more) {
-  & $PY_EXE @($PY_ARGS + $more)
+  Invoke-ExternalTool $PY_EXE ($PY_ARGS + $more)
 }
 
 # --- guards for dotnet/node ---
@@ -50,30 +51,37 @@ $env:Path = [Environment]::GetEnvironmentVariable("Path","User") + ";" +
 $dotnetTools = @("dotnet-format","csharpier","dotnet-ef","dotnet-outdated-tool")
 Write-Host "==> Installing/updating .NET global tools..."
 foreach ($t in $dotnetTools) {
-  try { dotnet tool update -g $t | Out-Null; Write-Host "   = $t (updated)" }
-  catch { dotnet tool install -g $t | Out-Null; Write-Host "   + $t (installed)" }
+  try {
+    Invoke-ExternalTool dotnet @('tool', 'update', '-g', $t) | Out-Null
+  } catch {
+    Write-Warning ("Could not update {0}: {1} Trying install." -f $t, $_.Exception.Message)
+    Invoke-ExternalTool dotnet @('tool', 'install', '-g', $t) | Out-Null
+  }
+  Write-Host "   * $t ready"
 }
 
 # ---------- Node: Corepack with verification + fallback ----------
 Write-Host "==> Enabling Corepack (pnpm/yarn) with verification..."
 $pnpmOk = $false; $yarnOk = $false
 try {
-  corepack enable 2>$null
-  corepack prepare pnpm@latest --activate 2>$null
-  corepack prepare yarn@stable  --activate 2>$null
+  Invoke-ExternalTool corepack @('enable') | Out-Null
+  Invoke-ExternalTool corepack @('prepare', 'pnpm@latest', '--activate') | Out-Null
+  Invoke-ExternalTool corepack @('prepare', 'yarn@stable', '--activate') | Out-Null
   $pnpmOk = [bool](Get-Command pnpm -ErrorAction SilentlyContinue)
   $yarnOk = [bool](Get-Command yarn -ErrorAction SilentlyContinue)
-} catch { }
+} catch {
+  Write-Warning ("Corepack setup failed: {0}" -f $_.Exception.Message)
+}
 
 if (-not $pnpmOk -or -not $yarnOk) {
-  Write-Warning "Corepack shims not available (Program Files is locked). Falling back to npm -g in user dir."
-  npm config set prefix "$npmUserBin" | Out-Null
-  if (-not $pnpmOk) { npm -g install pnpm | Out-Null }
-  if (-not $yarnOk) { npm -g install yarn | Out-Null }
+  Write-Warning "Corepack shims not available. Falling back to npm -g in user dir."
+  Invoke-ExternalTool npm @('config', 'set', 'prefix', $npmUserBin) | Out-Null
+  if (-not $pnpmOk) { Invoke-ExternalTool npm @('-g', 'install', 'pnpm') | Out-Null }
+  if (-not $yarnOk) { Invoke-ExternalTool npm @('-g', 'install', 'yarn') | Out-Null }
 }
 
 Write-Host "==> Installing Angular/Nest CLIs globally..."
-npm -g install @angular/cli @nestjs/cli | Out-Null
+Invoke-ExternalTool npm @('-g', 'install', '@angular/cli', '@nestjs/cli') | Out-Null
 
 # ---------- Python: pipx via launcher (no 'python' alias issues) ----------
 Write-Host "==> Ensuring pipx + Python dev tools (black, isort, ruff)..."

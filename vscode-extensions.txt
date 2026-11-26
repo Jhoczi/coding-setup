@@ -10,6 +10,7 @@ formulahendry.dotnet-test-explorer
 # --- Python
 ms-python.python
 ms-python.vscode-pylance
+ms-python.debugpy
 ms-toolsai.jupyter
 ms-python.black-formatter
 ms-python.isort
@@ -34,6 +35,8 @@ eamodio.gitlens
 mhutchie.git-graph
 EditorConfig.EditorConfig
 Gruntfuggly.todo-tree
+humao.rest-client
+openai.chatgpt
 
 # --- CI/CD
 github.vscode-github-actions

@@ -2,9 +2,7 @@
 
 Automates a complete dev environment for a Senior .NET developer working across **C#**, **Python**, and **JavaScript** (React / Angular / Nest).
 It installs system tools, WSL2 + Docker Desktop, global CLIs, and a full VS Code setup.
-Dynamic .NET/Python versions are managed via `versions.json` and auto-updated weekly by GitHub Actions.
-
-> All scripts are idempotent and prefer silent/non-interactive installs. Files are ASCII/UTF-8 to avoid PowerShell parsing issues.
+`versions.json` selects the .NET SDK and Python release lines for both installation and updates. GitHub Actions checks for newer release lines weekly and proposes changes in a pull request.
 
 ---
 
@@ -14,15 +12,17 @@ Dynamic .NET/Python versions are managed via `versions.json` and auto-updated we
 .
 ├─ install-all.ps1                 # One-click orchestration (auto-elevates to Admin)
 ├─ install-choco.ps1               # Installs Chocolatey
-├─ install-dev.ps1                 # Git, VS Code, .NET LTS, Node LTS, Python LTS, DBeaver, Make
+├─ install-dev.ps1                 # Git, VS Code, .NET LTS, Node LTS, Python, DBeaver, Make
 ├─ install-docker.ps1              # WSL2 + Ubuntu (WSL) + Docker Desktop
 ├─ update-dev.ps1                  # Updates system packages (winget/choco)
 ├─ install-global-tools-user.ps1   # (USER) .NET tools, pnpm/yarn, Angular/Nest CLI, pipx + black/isort/ruff
 ├─ setup-vscode.ps1                # (USER) VS Code extensions + settings
 ├─ vscode-extensions.txt           # VS Code extension list (incl. PowerShell)
 ├─ vscode-settings.json            # VS Code settings (icons, formatters, linters)
-├─ vscode-keybindings.json         # Optional keybindings
+├─ vscode-keybindings.json         # Optional local file you can add
 ├─ versions.json                   # Defines current .NET LTS major + Python cycle
+├─ dev-packages.ps1                 # Shared package IDs and installer arguments
+├─ external-tools.ps1              # Shared CLI runner with exit-code checking
 └─ .github/
    ├─ workflows/lts-updater.yml    # GitHub Action: weekly check for new LTS
    └─ scripts/update-lts.js        # Script updating versions.json + report
@@ -33,7 +33,7 @@ Dynamic .NET/Python versions are managed via `versions.json` and auto-updated we
 ## Prerequisites
 
 - Windows 11 with Internet access
-- Ability to run PowerShell as Administrator (for system installs)
+- Windows PowerShell and an account that can elevate for system installation
 - Recommended: Windows Terminal (better UTF-8/emoji)
 
 > If you create or edit scripts yourself, save with UTF-8 and avoid smart quotes/dashes.
@@ -55,12 +55,17 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
    - install-choco.ps1
    - install-dev.ps1
    - install-docker.ps1
-   - update-dev.ps1
-2. Schedule and run user phase (non-admin):
+   - update-dev.ps1 (only with `-UpdateAfterInstall`)
+2. Run the user phase with limited privileges through Task Scheduler:
    - install-global-tools-user.ps1
    - setup-vscode.ps1
 
-> If this is the first time enabling WSL/VirtualMachinePlatform, reboot at the end.
+Use the same signed-in account when approving elevation. If you need credentials for a different administrator, use the [manual sequence](#manual-run-if-not-using-install-all) so you can run the user phase under your own account.
+
+Use `.\install-all.ps1 -UpdateAfterInstall` to update system packages after installation.
+Add `-CloseApps` to explicitly allow the updater to force-close VS Code, DBeaver and Docker Desktop and stop the Docker service.
+
+If the Docker setup requests a restart, reboot and rerun `.\install-docker.ps1` as administrator to finish configuring WSL and Ubuntu.
 
 ---
 
@@ -72,7 +77,7 @@ Installs Chocolatey (or prints installed version) and refreshes PATH for the ses
 
 ### install-dev.ps1 (Admin)
 
-Installs or updates core tools. Uses winget with `--silent --disable-interactivity` and falls back to choco where needed.
+Installs missing core tools. Uses winget with `--silent --disable-interactivity` and falls back to choco where needed.
 Dynamic versions come from `versions.json`:
 
 - Git (Git.Git)
@@ -89,16 +94,16 @@ Dynamic versions come from `versions.json`:
 - Sets WSL2 as default
 - Installs Ubuntu (WSL) if missing
 - Installs Docker Desktop (Chocolatey)
-- Adds current user to `docker-users`
+- Attempts to add the account running the script to `docker-users`
 
-> After first-time WSL/VM feature enablement, reboot Windows. Then in Docker Desktop:
+> After completing WSL setup, open Docker Desktop:
 > Settings → General → Use the WSL 2 based engine
 > Settings → Resources → WSL Integration → enable Ubuntu
 
 ### update-dev.ps1 (Admin)
 
-Quietly updates the same core system tools via winget/choco.
-Optional: `-UpgradeAllWinget` to upgrade all winget packages.
+Updates the core system tools using the same package IDs and versions as `install-dev.ps1`. It also updates Docker Desktop.
+Use `-CloseApps` to allow the updater to force-close running apps before updating. Use `-UpgradeAllWinget` to upgrade all winget packages.
 
 ### install-global-tools-user.ps1 (User)
 
@@ -112,9 +117,11 @@ Run without Admin. Sets up user-profile tools:
 
 ### setup-vscode.ps1 (User)
 
-- Installs extensions from `vscode-extensions.txt` (includes `ms-vscode.PowerShell`)
-- Applies `vscode-settings.json` (Material Icon Theme; Prettier/Black/CSharpier; ESLint/isort/ruff)
-- Applies `vscode-keybindings.json` (optional)
+- Installs missing extensions from `vscode-extensions.txt`, including Python Debugger, REST Client and OpenAI's VS Code extension.
+- Copies `vscode-settings.json` to `%APPDATA%\Code\User\settings.json`.
+- Copies `vscode-keybindings.json` to the same profile directory if you provide the file.
+
+The copy overwrites the corresponding profile file. Back up your settings and keybindings before running the script if you want to keep them.
 
 ---
 
@@ -124,7 +131,7 @@ This repo includes automation to keep `versions.json` up to date:
 
 - Workflow: `.github/workflows/lts-updater.yml` (runs weekly or manually)
 - Script: `.github/scripts/update-lts.js`
-- Checks latest .NET LTS major and supported Python 3.x cycle using vendor APIs
+- Checks for a stable .NET LTS release using Microsoft metadata and a supported Python 3.x cycle using endoflife.date
 - Opens a Pull Request if updates are found (with a diff in `.github/lts-report.md`)
 
 > Guard logic prevents accidental downgrades if APIs misreport versions.
@@ -156,6 +163,18 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 ---
 
 ## Verify Your Setup
+
+Run this check from the repository root to list any configured VS Code extensions that are still missing:
+
+```powershell
+$expected = Get-Content .\vscode-extensions.txt | ForEach-Object { $_.Trim() } |
+  Where-Object { $_ -and -not $_.StartsWith('#') }
+$installed = code --list-extensions
+if ($LASTEXITCODE -ne 0) { throw 'Could not list installed VS Code extensions.' }
+$expected | Where-Object { $_ -notin $installed }
+```
+
+An empty result means all configured extensions are present. Use the checks below to verify the other tools.
 
 ```powershell
 # System tools
@@ -209,7 +228,7 @@ ruff --version
 ## Customization
 
 - **VS Code**: edit `vscode-extensions.txt`, `vscode-settings.json`, `vscode-keybindings.json`.
-- **Packages**: extend `install-dev.ps1` and `update-dev.ps1` (winget IDs + choco fallbacks).
+- **Packages**: edit `dev-packages.ps1` for package IDs and Chocolatey fallbacks, and `versions.json` for the .NET and Python release lines.
 - **Skip parts**: run scripts individually or add flags to `install-all.ps1`.
 
 ---

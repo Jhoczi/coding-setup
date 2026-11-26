@@ -1,6 +1,7 @@
 # install-docker.ps1  (ASCII-safe)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
+. (Join-Path $PSScriptRoot "external-tools.ps1")
 
 # --- 0) Admin check ---
 $principal = New-Object Security.Principal.WindowsPrincipal(
@@ -11,42 +12,40 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 
 Write-Host '==> STEP 1/5: Enabling required features: WSL + VirtualMachinePlatform...'
-& dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Null
-& dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null
+$restartNeeded = $false
+foreach ($feature in @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform')) {
+  Invoke-ExternalTool dism.exe @('/online', '/enable-feature', "/featurename:$feature", '/all', '/norestart') -SuccessExitCodes @(0, 3010) | Out-Null
+  if ($LASTEXITCODE -eq 3010) { $restartNeeded = $true }
+}
 
-Write-Host '==> STEP 2/5: Setting WSL default version to 2...'
-wsl --set-default-version 2 2>$null
-
-Write-Host '==> STEP 3/5: Checking if Ubuntu (WSL) is installed...'
-$distros = (wsl -l -q) 2>$null
-if ($null -eq $distros -or ($distros -notcontains 'Ubuntu')) {
-  Write-Host '   Ubuntu not found - installing (this may require a restart)...'
-  try {
-    wsl --install -d Ubuntu
-  } catch {
-    Write-Warning 'Could not automatically install Ubuntu. After reboot you can run: wsl --install -d Ubuntu'
-  }
+if ($restartNeeded) {
+  Write-Warning 'Restart Windows and rerun install-docker.ps1 to finish WSL and Ubuntu setup.'
 } else {
-  Write-Host '   Ubuntu already installed.'
+  Write-Host '==> STEP 2/5: Setting WSL default version to 2...'
+  Invoke-ExternalTool wsl.exe @('--set-default-version', '2')
+
+  Write-Host '==> STEP 3/5: Checking if Ubuntu (WSL) is installed...'
+  $distros = Invoke-ExternalTool wsl.exe @('-l', '-q') | ForEach-Object { ($_ -replace '\x00', '').Trim() }
+  if ($distros -notcontains 'Ubuntu') {
+    Write-Host '   Ubuntu not found - installing...'
+    Invoke-ExternalTool wsl.exe @('--install', '-d', 'Ubuntu')
+  } else {
+    Write-Host '   Ubuntu already installed.'
+  }
 }
 
 Write-Host '==> STEP 4/5: Installing Docker Desktop via Chocolatey (if missing)...'
 if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
   throw 'Chocolatey is not installed. Run install-choco.ps1 first.'
 }
-# check local install
-$dockerInstalled = choco list --local-only docker-desktop | Select-String -Pattern '^docker-desktop '
-if (-not $dockerInstalled) {
-  choco install -y docker-desktop --no-progress --limit-output --execution-timeout=0
-} else {
-  Write-Host '   Docker Desktop already installed - skipping.'
-}
+# Chocolatey skips installation when the package is already installed.
+Invoke-ExternalTool choco @('install', '-y', 'docker-desktop', '--no-progress', '--limit-output', '--execution-timeout=0') -SuccessExitCodes @(0, 1641, 3010)
 
 Write-Host '==> STEP 5/5: Adding current user to docker-users group...'
 try {
-  & net localgroup docker-users $env:UserName /add | Out-Null
+  Invoke-ExternalTool net.exe @('localgroup', 'docker-users', $env:UserName, '/add') | Out-Null
 } catch {
-  Write-Warning 'Could not add to docker-users group (maybe already a member).'
+  Write-Warning ("Could not add user to docker-users (the user may already be a member): {0}" -f $_.Exception.Message)
 }
 
 Write-Host ''

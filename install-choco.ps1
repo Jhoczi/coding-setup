@@ -1,5 +1,6 @@
 # install-choco.ps1 -> powershell -NoProfile -ExecutionPolicy Bypass -File .\install-choco.ps1
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "external-tools.ps1")
 
 # 1) Requires `Run as Administrator`
 $principal = New-Object Security.Principal.WindowsPrincipal(
@@ -11,7 +12,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 
 # 2) If Chocolatey was already installed - show the version and exit
 if (Get-Command choco -ErrorAction SilentlyContinue) {
-  $ver = choco --version
+  $ver = Invoke-ExternalTool choco @('--version')
   Write-Host "Chocolatey already installed. Version: $ver"
   exit 0
 }
@@ -33,5 +34,5 @@ if (-not ($env:Path.Split(';') -contains $chocoBin)) {
 }
 
 # 6) Verification
-choco --version | Write-Host
+Invoke-ExternalTool choco @('--version') | Write-Host
 Write-Host "Chocolatey successfully installed."
